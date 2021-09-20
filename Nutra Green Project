@@ -1,0 +1,232 @@
+//MAPPING//
+UnitCost_Map:
+MAPPING LOAD
+    Number as "Item Number",
+    "Unit Cost"
+FROM [lib://DataFiles/Products.xlsx]
+(ooxml, embedded labels, header is 3 lines, table is Products);
+//
+
+//FACTS//
+//Load Orders from Orders.xlsx ***
+Orders:
+LOAD
+    "Order Number",
+    "Customer Number" as CustomerNo,
+    "Employee Number",
+    "Order Date",
+    "Invoice Date",
+    "Invoice Number",
+    "Promised Delivery Date",
+    "Employee Number" AS EmpSalesNum
+FROM [lib://DataFiles/Orders.xlsx]
+(ooxml, embedded labels, table is Orders);
+
+OrderLines:
+LOAD
+    ". of Days to Ship",
+    "Customer Number" as Status,
+    GrossSales,
+    "Item Desc",
+    "Item Number",
+//Counter field to count number of items sold
+	"Item Number" as ItemNumberSold,
+    Margin,
+    "Order Number",
+    "Unit Price",
+    Sales,
+    "Sales Qty",
+    "Order Line No",
+    Discount,
+    "Unit Price" * "Sales Qty" * (1 - Discount) AS LineSalesAmount,
+    
+// APPLYMAP function to retrieve the Unit Cost for a given Item Number and multiplies it by Sales Qty to 
+// calculate the COGS for each line item.
+    APPLYMAP ('UnitCost_Map', "Item Number", 0) * "Sales Qty" AS COGS
+FROM [lib://DataFiles/Order Line Items.xlsx]
+(ooxml, embedded labels, table is Order_Line_Items);
+
+Shipments:
+LOAD
+    "Order Number",
+    "Order Line No" as LineNo,
+    "Shipment Date"
+FROM [lib://DataFiles/Shipments.xlsx]
+(ooxml, embedded labels, table is Shipments);
+
+//
+
+//DIMENSIONS//
+// *** Load Customers from Customers.xlsx ***
+
+Customers:
+LOAD
+    Customer,
+    "Customer Number" as CustomerNo,
+    Address,
+    City,
+    StateProvince,
+    Country,
+    PostalCode,
+    Phone,
+    Fax,
+    "Line of Business",
+    Region,
+    "Region Code",
+    "Base currency"
+FROM [lib://DataFiles/Customers.xlsx]
+(ooxml, embedded labels, table is Customers);
+
+// CUSTOM SORT - INLINE
+JobSortTitle:
+LOAD * INLINE [
+	JobTitle
+    ceo
+    CFO
+    CMO
+    Legal Counsel
+];
+
+Employees:
+LOAD
+    "Employee Number",
+    "First Name"&' '&"Last Name" as Name,
+    JobTitle,
+    OfficeID
+FROM [lib://DataFiles/Employees.xlsx]
+(ooxml, embedded labels, table is Employees);
+
+//OFFICES:Join Offices to Employees in such a way that only those offices that have employees are include
+LEFT JOIN(Employees)
+LOAD
+    OfficeID,
+    OfficeAddress,
+    OfficeCity,
+    OfficeCountry,
+    OfficeFax,
+    OfficePhone,
+    OfficePostalCode,
+    OfficeStateProvince
+FROM [lib://DataFiles/Offices.xlsx]
+(ooxml, embedded labels, table is Offices);
+
+
+//RESIDENT+ WHERE EXSIST
+SalesPerson:
+Load
+	"Employee Number",
+	Name AS SalesPerson,
+    JobTitle AS SalesTitle
+    RESIDENT Employees
+    WHERE EXISTS(EmpSalesNum,"Employee Number");
+    
+Products:
+LOAD
+    Number AS "Item Number",
+    "Item Desc" as ItemDescription,
+    "Catalog Price",
+    "Unit Cost",
+    SupplierID,
+    SupplierID as SupplierNum,
+    "Manufacturer Number" as ManufacturerNo,
+    "Product Group",
+    "Product Sub Group",
+    QualRating
+FROM [lib://DataFiles/Products.xlsx]
+(ooxml, embedded labels, header is 3 lines, table is Products);
+
+// Suppliers:Join the table to Products so that only the values with an existing SupplierID in the Products table are added. 
+LEFT JOIN (Products)
+LOAD
+    SupplierID,
+    SupplierName
+FROM [lib://DataFiles/Suppliers.xlsx]
+(ooxml, embedded labels, table is Suppliers);
+
+// use QUALIFY so that field name will be reflixed as tablename.fieldname
+QUALIFY *;
+UNQUALIFY ManufacturerNo;
+Manufacturers:
+LOAD
+    "Manufacturer Number" as ManufacturerNo,
+    Manufacturer,
+    Address,
+    City,
+    StateProvince,
+    Country,
+    PostalCode,
+    Phone,
+    Fax,
+    GreenRating
+FROM [lib://DataFiles/Manufacturers.xlsx]
+(ooxml, embedded labels, table is Manufacturers);
+
+//CONCATENATE = UNION = AT VALUE TO BOTTOM OF OTHER TABLE
+CONCATENATE (Employees)
+Consultants:
+LOAD
+    "Employee Number",
+    "First Name"&' '&"Last Name" as Name,
+    JobTitle,
+    Specialty,
+    OfficeID
+FROM [lib://DataFiles/Consultants.xlsx]
+(ooxml, embedded labels, table is Consultants);
+
+//DROP CUSTOM SORT TABLE
+DROP table JobSortTitle;
+
+UNQUALIFY Region;
+Regions:
+LOAD
+    Region,
+    Population
+FROM [lib://DataFiles/RegionPopulation.xlsx]
+(ooxml, embedded labels, table is Population);
+//
+
+//VALIDATION//
+UNQUALIFY *;
+CostComparision:
+LOAD
+    "Item Number" as "Item Number",
+    "Orig Unit Cost"
+FROM [lib://DataFiles/ProductCostComparison.xlsx]
+(ooxml, embedded labels, table is ProductCostComparison)
+//
+
+//MASTER CALENDAR//
+// STEP 1: Get date range from orders
+StartAndEndDates:
+LOAD
+MIN([Order Date]) AS FirstOrderDate,
+MAX([Order Date]) AS LastOrderDate
+RESIDENT Orders;
+
+// STEP 2: Capture date range in variables
+LET vFirstDate = NUM(PEEK('FirstOrderDate', 0, 'StartAndEndDates'));
+LET vLastDate = NUM(PEEK('LastOrderDate', 0, 'StartAndEndDates'));
+
+// STEP 3: Auto-generate gap-less calendar (Temporary calendar)
+TempCal:
+LOAD
+DATE($(vFirstDate) + ROWNO() -1) AS TempDate
+AUTOGENERATE
+$(vLastDate) - $(vFirstDate) + 1;
+
+// STEP 4: Create date attributes for master calendar
+MasterCalendar:
+LOAD
+TempDate AS [Order Date],
+WEEK(TempDate) AS Week,
+YEAR(TempDate) AS Year,
+MONTH(TempDate) AS Month,
+DAY(TempDate) AS Day,
+WEEKDAY (TempDate) AS Weekday,
+'Q' & CEIL(MONTH(TempDate) / 3) AS Quarter,
+WEEK(TempDate) & '-' & YEAR(TempDate) AS WeekYear
+RESIDENT TempCal;
+
+// STEP 5: Drop tables
+DROP TABLES StartAndEndDates, TempCal;
+//
