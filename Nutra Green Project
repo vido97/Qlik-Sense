@@ -161,7 +161,7 @@ LOAD
 FROM [lib://DataFiles/Manufacturers.xlsx]
 (ooxml, embedded labels, table is Manufacturers);
 
-//CONCATENATE = UNION = AT VALUE TO BOTTOM OF OTHER TABLE
+//CONCATENATE = UNION = ADD VALUE TO BOTTOM OF OTHER TABLE
 CONCATENATE (Employees)
 Consultants:
 LOAD
